@@ -258,6 +258,26 @@ canvas {
   color: #d4d4d4;
 }
 
+/* Speech state helper (shown only while recognition is not ready) */
+.viz-speech-status {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  z-index: 90;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(220, 248, 240, 0.9);
+  background: rgba(0, 30, 56, 0.42);
+  border: 1px solid rgba(112, 196, 170, 0.4);
+  pointer-events: none;
+}
+
 /* Optional skip: bottom corner, almost invisible until hover/focus */
 .viz-bloom-skip {
   position: absolute;

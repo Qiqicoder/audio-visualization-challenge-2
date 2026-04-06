@@ -1,7 +1,13 @@
 import { TreeSystem } from './TreeSystem'
-import { SpeechHandler } from './SpeechHandler'
+import { SpeechHandler, type SpeechErrorCode } from './SpeechHandler'
 import { FlowerSystem } from './FlowerSystem'
 import { POEM } from '../poem'
+
+type VoiceTreeVisualizerOptions = {
+  onSpeechListeningStart?: () => void
+  onSpeechListeningEnd?: () => void
+  onSpeechError?: (error: SpeechErrorCode) => void
+}
 
 export class VoiceTreeVisualizer {
   private tree: TreeSystem
@@ -16,7 +22,7 @@ export class VoiceTreeVisualizer {
     width: number,
     height: number,
     dropWord: (index: number) => void,
-    opts: { onSpeechListeningStart?: () => void } = {}
+    opts: VoiceTreeVisualizerOptions = {}
   ) {
     this.tree = new TreeSystem(container, width, height)
     this.dropWord = dropWord
@@ -39,11 +45,15 @@ export class VoiceTreeVisualizer {
           this.currentSentence++
         }
       },
-      { onListeningStart: opts.onSpeechListeningStart }
+      {
+        onListeningStart: opts.onSpeechListeningStart,
+        onListeningEnd: opts.onSpeechListeningEnd,
+        onError: opts.onSpeechError,
+      }
     )
   }
 
-  /** Start Web Speech API; Visualizer calls when `isActive` and/or after pointer on stage. */
+  /** Start speech recognition. */
   startSpeech() {
     this.speech.start()
   }

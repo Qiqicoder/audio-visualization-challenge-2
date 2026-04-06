@@ -1,5 +1,9 @@
+export type SpeechErrorCode = SpeechRecognitionErrorEvent['error'] | 'not-supported' | 'start-failed'
+
 export type SpeechHandlerOptions = {
   onListeningStart?: () => void
+  onListeningEnd?: () => void
+  onError?: (error: SpeechErrorCode) => void
 }
 
 export class SpeechHandler {
@@ -22,6 +26,7 @@ export class SpeechHandler {
       window.SpeechRecognition ||
       (window as unknown as { webkitSpeechRecognition: typeof SpeechRecognition }).webkitSpeechRecognition
     if (!SR) {
+      this.options.onError?.('not-supported')
       console.warn('SpeechRecognition not supported; try Chrome.')
       return
     }
@@ -54,6 +59,7 @@ export class SpeechHandler {
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         this.restartAfterEnd = false
       }
+      this.options.onError?.(event.error)
       console.error('SpeechRecognition error:', event.error)
     }
 
@@ -62,6 +68,7 @@ export class SpeechHandler {
     }
 
     this.recognition.onend = () => {
+      this.options.onListeningEnd?.()
       if (this.disposed || !this.restartAfterEnd || !this.recognition) return
       this.processedWordCount = 0
       try {
@@ -75,6 +82,7 @@ export class SpeechHandler {
     try {
       this.recognition.start()
     } catch (e) {
+      this.options.onError?.('start-failed')
       console.error('SpeechRecognition.start() failed:', e)
       this.restartAfterEnd = false
     }
