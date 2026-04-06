@@ -17,9 +17,9 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
   const containerRef = useRef<HTMLDivElement>(null)
   const vizRef = useRef<VoiceTreeVisualizer | null>(null)
   const initializedRef = useRef(false)
+  /** True after SpeechRecognition `onstart`; skips duplicate `start()` calls. */
+  const speechListeningRef = useRef(false)
   const [fallenWords, setFallenWords] = useState<Set<number>>(new Set())
-  const [speechListening, setSpeechListening] = useState(false)
-  const [engineReady, setEngineReady] = useState(false)
 
   const dropWord = useCallback((index: number) => {
     setFallenWords(prev => new Set([...prev, index]))
@@ -30,27 +30,41 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
     vizRef.current?.skipToBloom()
   }, [])
 
+  const tryStartSpeech = useCallback(() => {
+    if (!vizRef.current || speechListeningRef.current) return
+    vizRef.current.startSpeech()
+  }, [])
+
   useEffect(() => {
     if (!containerRef.current) return
     if (initializedRef.current) return
     initializedRef.current = true
-    setSpeechListening(false)
-    setEngineReady(false)
+    speechListeningRef.current = false
 
     const viz = new VoiceTreeVisualizer(containerRef.current, width, height, dropWord, {
-      onSpeechListeningStart: () => setSpeechListening(true),
+      onSpeechListeningStart: () => {
+        speechListeningRef.current = true
+      },
     })
     vizRef.current = viz
-    setEngineReady(true)
 
     return () => {
       viz.dispose()
       vizRef.current = null
       initializedRef.current = false
-      setEngineReady(false)
-      setSpeechListening(false)
+      speechListeningRef.current = false
     }
   }, [width, height, dropWord])
+
+  useEffect(() => {
+    if (!isActive) {
+      speechListeningRef.current = false
+      return
+    }
+    queueMicrotask(() => {
+      tryStartSpeech()
+    })
+  }, [isActive, tryStartSpeech])
 
   useEffect(() => {
     if (!isActive) return
@@ -64,18 +78,13 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
   }, [isActive, timeDomainData, frequencyData])
 
   return (
-    <div ref={boundsRef} style={{ position: 'relative', width, height, overflow: 'hidden' }}>
-      {!speechListening && (
-        <button
-          type="button"
-          className="viz-start-voice"
-          disabled={!engineReady}
-          onClick={() => vizRef.current?.startSpeech()}
-          title="Chrome needs a click to start speech recognition (allow the mic first)"
-        >
-          Start voice
-        </button>
-      )}
+    <div
+      ref={boundsRef}
+      style={{ position: 'relative', width, height, overflow: 'hidden' }}
+      onPointerDownCapture={() => {
+        if (isActive) tryStartSpeech()
+      }}
+    >
       <button
         type="button"
         className="viz-bloom-skip"

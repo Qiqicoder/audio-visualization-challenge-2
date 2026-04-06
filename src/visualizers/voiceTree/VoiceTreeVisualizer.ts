@@ -43,7 +43,7 @@ export class VoiceTreeVisualizer {
     )
   }
 
-  /** Call from a user gesture (click/tap). Auto start in useEffect triggers `not-allowed` in Chrome. */
+  /** Start Web Speech API; Visualizer calls when `isActive` and/or after pointer on stage. */
   startSpeech() {
     this.speech.start()
   }
