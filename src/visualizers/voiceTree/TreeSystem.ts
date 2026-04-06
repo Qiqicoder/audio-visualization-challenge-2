@@ -12,10 +12,20 @@ interface Branch {
   growthComplete?: boolean
 }
 
-/** 树生成用到的常量（数值不变，仅集中存放） */
+/** flower discs: lower tier = canopy / outer tips preferred in sampling */
+export type FlowerAnchorKind = 'tip' | 'mid'
+
+export interface FlowerAnchor {
+  id: string
+  tier: number
+  kind: FlowerAnchorKind
+  branchIndex: number
+}
+
+/** Procedural tree tuning (keep stable to preserve silhouette). */
 const TREE_GEN = {
   gScale: 0.9,
-  /** L1 朝上收、L2/L3 相对父向额外张开的角（弧度） */
+  /** Extra spread (rad) for L2/L3 branches */
   angle5: (5 * Math.PI) / 180,
 } as const
 
@@ -29,11 +39,12 @@ export class TreeSystem {
   private branches: Branch[] = []
   private dirLight!: THREE.DirectionalLight
   private groundMesh!: THREE.Mesh
+  /** Tinted shadow catcher over the pink plane (Three shadows are grayscale; color comes from ShadowMaterial). */
+  private shadowCatcher!: THREE.Mesh
   private composer!: EffectComposer
   private bloomPass!: UnrealBloomPass
 
   private readonly groundSurfaceY = 0.01
-  /** 地面矩形边长（PlaneGeometry 宽=高）；越小地块越小 */
   private readonly groundPlaneSize = 5
   private readonly treeGroupBaseY = 0.02
   private readonly trunkTopY = 0.98
@@ -47,10 +58,9 @@ export class TreeSystem {
   private readonly branchGrowDurationSec = 0.55
   private activeGrowths: { branchIndex: number; mesh: THREE.Mesh; t0: number }[] = []
 
-  /** 第二句：树干长完后是否接着长第一层（仅 level 1 触发流程） */
   private deferredL1Grow = false
 
-  /** 种子：未出现 / 空中悬浮 / 下落 / 已在地面（等树干出现时消失） */
+  /** Seed idle → float → fall → on ground (hidden when trunk shows). */
   private seedPhase: 'none' | 'float' | 'fall' | 'ground' = 'none'
   private seedFloatStartSec = 0
   private seedFallStartSec = 0
@@ -58,26 +68,27 @@ export class TreeSystem {
   private readonly seedFloatDurationSec = 1
   private readonly seedFallDurationSec = 0.55
   private readonly seedFloatHeight = 1.12
-  /** 落地后种子底部略高于地面（Lathe 底部为原点） */
-  private readonly seedOnGroundY = 0.03
+  private readonly seedOnGroundY = 0.018
 
   private readonly treeBranchColor = 0x5cf5e8
   private readonly treeBranchEmissive = 0xa7f3d0
 
   private static readonly WORLD_UP = new THREE.Vector3(0, 1, 0)
 
-  /** 下圆上尖的籽粒轮廓（绕 Y 旋转），底面落在 y=0 */
+  /** Lathe seed: compact teardrop; bottom at y=0 after translate. */
   private createSeedGeometry(): THREE.BufferGeometry {
     const pts = [
-      new THREE.Vector2(0.001, 0),
-      new THREE.Vector2(0.1, 0.03),
-      new THREE.Vector2(0.14, 0.11),
-      new THREE.Vector2(0.15, 0.17),
-      new THREE.Vector2(0.11, 0.23),
-      new THREE.Vector2(0.045, 0.28),
-      new THREE.Vector2(0.001, 0.31),
+      new THREE.Vector2(0.002, 0),
+      new THREE.Vector2(0.04, 0.02),
+      new THREE.Vector2(0.068, 0.05),
+      new THREE.Vector2(0.076, 0.082),
+      new THREE.Vector2(0.072, 0.108),
+      new THREE.Vector2(0.055, 0.13),
+      new THREE.Vector2(0.028, 0.146),
+      new THREE.Vector2(0.006, 0.156),
+      new THREE.Vector2(0.001, 0.158),
     ]
-    const geo = new THREE.LatheGeometry(pts, 32)
+    const geo = new THREE.LatheGeometry(pts, 40)
     geo.computeBoundingBox()
     const minY = geo.boundingBox!.min.y
     geo.translate(0, -minY, 0)
@@ -111,7 +122,7 @@ export class TreeSystem {
     this.treeGroup.position.y = this.treeGroupBaseY
     this.scene.add(this.treeGroup)
 
-    // 沿视线推轨：到 lookAt 的距离 / camZoom ≈ 画面线性尺寸 × camZoom（此处 1.8）
+    // Dolly toward subject; camZoom ≈ framing tightness (1.8 here).
     const camZoom = 1.8
     const camLookAt = new THREE.Vector3(0, 1.52, 0)
     const camPos = new THREE.Vector3(0, 3.55, 5.85)
@@ -140,23 +151,39 @@ export class TreeSystem {
     this.scene.add(this.dirLight)
     this.scene.add(this.dirLight.target)
 
+    const groundGeo = new THREE.PlaneGeometry(this.groundPlaneSize, this.groundPlaneSize)
     this.groundMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(this.groundPlaneSize, this.groundPlaneSize),
+      groundGeo,
       new THREE.MeshStandardMaterial({ color: 0xffc8e4, roughness: 0.68, metalness: 0.05 })
     )
     this.groundMesh.rotation.x = -Math.PI / 2
     this.groundMesh.position.y = this.groundSurfaceY
-    this.groundMesh.receiveShadow = true
+    this.groundMesh.receiveShadow = false
     this.scene.add(this.groundMesh)
+
+    this.shadowCatcher = new THREE.Mesh(
+      new THREE.PlaneGeometry(this.groundPlaneSize, this.groundPlaneSize),
+      new THREE.ShadowMaterial({
+        color: 0x4890dc,
+        transparent: true,
+        opacity: 0.88,
+        depthWrite: false,
+      })
+    )
+    this.shadowCatcher.rotation.x = -Math.PI / 2
+    this.shadowCatcher.position.y = this.groundSurfaceY + 0.004
+    this.shadowCatcher.receiveShadow = true
+    this.shadowCatcher.renderOrder = 1
+    this.scene.add(this.shadowCatcher)
 
     this.seed = new THREE.Mesh(
       this.createSeedGeometry(),
       new THREE.MeshStandardMaterial({
-        color: 0x5c3d2e,
-        emissive: 0x000000,
-        emissiveIntensity: 0,
-        roughness: 0.48,
-        metalness: 0.05,
+        color: 0xe4ebe5,
+        emissive: 0x9ed4c4,
+        emissiveIntensity: 0.085,
+        roughness: 0.52,
+        metalness: 0.02,
       })
     )
     this.seed.position.set(0, this.groundSurfaceY + this.seedFloatHeight, 0)
@@ -173,9 +200,7 @@ export class TreeSystem {
     this.composer.addPass(this.bloomPass)
   }
 
-  /**
-   * 树拓扑与随机过程（勿改数值与 random 顺序，否则树形会变）
-   */
+  /** Procedural topology; keep weights/order stable or silhouette changes. */
   private buildBranchData(): Branch[] {
     const out: Branch[] = []
     const trunkTop = new THREE.Vector3(0, this.trunkTopY, 0)
@@ -343,7 +368,7 @@ export class TreeSystem {
     return d.applyAxisAngle(axis, deltaRad)
   }
 
-  /** L1 梢点：沿原长度把方向朝世界上方拧一小角 */
+  /** Pull L1 tips slightly toward world up. */
   private tiltL1Endpoint(end: THREE.Vector3, trunkTop: THREE.Vector3, deg5: number): THREE.Vector3 {
     const off = new THREE.Vector3().subVectors(end, trunkTop)
     const len = off.length()
@@ -438,7 +463,6 @@ export class TreeSystem {
     this.treeGroup.add(sphere)
   }
 
-  /** 仅树干（level 0），用于第二句第一阶段 */
   private startGrowTrunkOnly() {
     const t0 = performance.now() / 1000
     for (let i = 0; i < this.branches.length; i++) {
@@ -451,7 +475,6 @@ export class TreeSystem {
     }
   }
 
-  /** 仅第一层三叉，在树干伸长结束后调用 */
   private startGrowL1Only() {
     const t0 = performance.now() / 1000
     for (let i = 0; i < this.branches.length; i++) {
@@ -463,7 +486,6 @@ export class TreeSystem {
     }
   }
 
-  /** level 2 / 3：该层全部同时长 */
   private startLayerGrow(level: number) {
     const t0 = performance.now() / 1000
     for (let i = 0; i < this.branches.length; i++) {
@@ -527,7 +549,6 @@ export class TreeSystem {
       })
   }
 
-  /** L2 树枝中点（世界坐标），供 Phase 2 布花 */
   getMidPoints(): THREE.Vector3[] {
     return this.branches
       .filter(b => b.level === 2)
@@ -536,6 +557,56 @@ export class TreeSystem {
         this.treeGroup.localToWorld(v)
         return v
       })
+  }
+
+  /**
+   * Tiered attach points for flowers: canopy tips first, then lower tips, then midpoints on branches.
+   */
+  getFlowerAnchors(): FlowerAnchor[] {
+    if (this.branches.length === 0) return []
+
+    const ok = (b: Branch) => b.mesh !== null && b.growthComplete === true
+    const maxL = Math.max(...this.branches.map(b => b.level))
+    const out: FlowerAnchor[] = []
+
+    const pushEnds = (level: number, tier: number) => {
+      this.branches.forEach((b, i) => {
+        if (b.level === level && ok(b)) {
+          out.push({ id: `tip-L${level}-${i}`, tier, kind: 'tip', branchIndex: i })
+        }
+      })
+    }
+
+    pushEnds(maxL, 0)
+    if (maxL >= 1) pushEnds(maxL - 1, 1)
+    if (maxL >= 2) pushEnds(maxL - 2, 2)
+
+    let midTier = 3
+    for (const L of [3, 2, 1, 0]) {
+      this.branches.forEach((b, i) => {
+        if (b.level === L && ok(b)) {
+          out.push({ id: `mid-L${L}-${i}`, tier: midTier, kind: 'mid', branchIndex: i })
+        }
+      })
+      midTier++
+    }
+
+    return out
+  }
+
+  /** Branch tip or midpoint in local space + jitter → world (follows treeGroup spin). */
+  resolveFlowerAnchorWorldPosition(anchor: FlowerAnchor, jitterLocal: THREE.Vector3): THREE.Vector3 | null {
+    const b = this.branches[anchor.branchIndex]
+    if (!b || !b.mesh || !b.growthComplete) return null
+
+    const v =
+      anchor.kind === 'tip'
+        ? b.end.clone()
+        : new THREE.Vector3().lerpVectors(b.start, b.end, 0.5)
+    v.add(jitterLocal)
+    this.treeGroup.updateMatrixWorld(true)
+    v.applyMatrix4(this.treeGroup.matrixWorld)
+    return v
   }
 
   getScene(): THREE.Scene {
@@ -550,7 +621,6 @@ export class TreeSystem {
     void _index
   }
 
-  /** 第一句说完：种子出现 → 空中悬浮 1s → 落到地面 */
   triggerSeed() {
     this.seed.visible = true
     this.seed.scale.setScalar(1)
@@ -560,8 +630,7 @@ export class TreeSystem {
   }
 
   /**
-   * level 1：先只长树干，树干长完一瞬间再长第一层三叉。
-   * level 2/3：整层同时长。第二句起种子立刻消失。
+   * level 1: trunk only, then L1 forks. level 2/3: whole layer. Seed hides from line 2 onward.
    */
   triggerGrow(level: number) {
     if (level >= 1) {
@@ -584,7 +653,7 @@ export class TreeSystem {
 
     if (this.seedPhase === 'float') {
       const t = nowSec - this.seedFloatStartSec
-      const bob = Math.sin(t * 2.8) * 0.035
+      const bob = Math.sin(t * 2.8) * 0.02
       this.seed.position.y = this.groundSurfaceY + this.seedFloatHeight + bob
       if (t >= this.seedFloatDurationSec) {
         this.seedPhase = 'fall'
@@ -629,6 +698,8 @@ export class TreeSystem {
     ;(this.seed.material as THREE.MeshStandardMaterial).dispose()
     this.groundMesh.geometry.dispose()
     ;(this.groundMesh.material as THREE.MeshStandardMaterial).dispose()
+    this.shadowCatcher.geometry.dispose()
+    ;(this.shadowCatcher.material as THREE.ShadowMaterial).dispose()
     this.composer.dispose()
     this.renderer.domElement.remove()
     this.renderer.dispose()

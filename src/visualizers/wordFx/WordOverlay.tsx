@@ -9,47 +9,45 @@ import {
   type RefObject,
 } from 'react'
 
-/** px/frame² @~60fps，越大落得越快 */
+/** px/frame² (~60fps); higher = faster fall */
 const GRAVITY = 1.18
 const DRIFT_MAX = 0.35
-/** 落地时相对起始大小的缩放（营造由高往远的透视感） */
+/** Scale at impact vs start (depth cue) */
 const FALL_SCALE_MIN = 0.66
 const SPIN_MAX = 0.15
-/** 涟漪中心相对字底边往上偏移（px）；越小越贴近字底、越靠画面下缘 */
+/** Ripple center offset from word bottom (px) */
 const RIPPLE_UP_FROM_BOTTOM_PX = 4
 const IMPACT_MS = 220
 const DISSOLVE_MS = 650
 const RIPPLE_COUNT = 3
 
-/**
- * 落地高度：词「底边」停在舞台内的比例（0=顶，1=底）。
- * 想整体更靠下 → 两个数都略增大；更靠上则减小。
- */
+/** Word bottom band in stage (0=top, 1=bottom); raise both to land lower overall */
 const LANDING_BOTTOM_MIN_RATIO = 0.68
 const LANDING_BOTTOM_MAX_RATIO = 0.94
-/** 同一句话里上下起伏幅度（相对舞台高度） */
 const LANDING_WOBBLE_RATIO = 0.06
 
-/** 诗行：偏轻的衬线，无发光（与 index.html 字体一致） */
 const FONT_POEM = "'Cormorant Garamond', Georgia, 'Times New Roman', serif"
-/** 顶部提示：花体（两阶段同一字体） */
 const FONT_SCRIPT = "'Great Vibes', cursive"
 
-/** 梦幻青绿 #29EFB5 */
-const POEM_GREEN = '#29EFB5'
+/** Brand accents: blue “shadow” glow, green stroke */
+const ACCENT_GREEN = '#29EFB5'
+const ACCENT_BLUE_RGB = '72, 144, 220'
 
 const POEM_WORD_STYLE: CSSProperties = {
   fontFamily: FONT_POEM,
   fontWeight: 300,
   letterSpacing: '0.05em',
-  color: POEM_GREEN,
+  color: 'rgba(236, 255, 248, 0.98)',
+  WebkitTextStroke: `0.55px ${ACCENT_GREEN}`,
+  paintOrder: 'stroke fill',
+  textShadow: `0 2px 10px rgba(${ACCENT_BLUE_RGB}, 0.55), 0 5px 22px rgba(${ACCENT_BLUE_RGB}, 0.32), 0 8px 36px rgba(${ACCENT_BLUE_RGB}, 0.14)`,
 }
 
 type Phase = 'idle' | 'falling' | 'impact' | 'dissolve' | 'done'
 
 type ImpactBox = { cx: number; rippleY: number; dissolveY: number; w: number; h: number }
 
-/** 稳定 0..1，用于按词索引生成树冠上的落地高度 */
+/** Deterministic 0..1 from word index (land in a “canopy” band). */
 function hash01(n: number): number {
   let x = Math.imul(n ^ 0x9e3779b9, 0x85ebca6b)
   x ^= x >>> 13
@@ -57,10 +55,7 @@ function hash01(n: number): number {
   return ((x >>> 0) % 10000) / 10000
 }
 
-/**
- * 词底边触达的 Y（舞台坐标，越大越靠下）。
- * 落在「树冠」一带：有上有下。
- */
+/** Target Y for word bottom edge in stage pixels (tree crown band). */
 function landingBottomYOnTree(globalIndex: number, stageHeight: number): number {
   const h = hash01(globalIndex)
   const h2 = hash01(globalIndex + 31)
@@ -77,7 +72,6 @@ type FallingWordProps = {
   triggered: boolean
   boundsRef: RefObject<HTMLElement | null>
   stageHeight: number
-  /** 诗行字号 */
   poemFontSizePx: number
 }
 
@@ -121,9 +115,8 @@ function RippleBurst({
             marginLeft: -14,
             marginTop: -14,
             borderRadius: '50%',
-            border: '1px solid rgba(200, 220, 255, 0.38)',
-            boxShadow:
-              '0 0 18px rgba(180, 210, 255, 0.22), 0 0 36px rgba(220, 190, 255, 0.14), inset 0 0 12px rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${ACCENT_GREEN}`,
+            boxShadow: `0 0 14px rgba(${ACCENT_BLUE_RGB}, 0.45), 0 0 28px rgba(${ACCENT_BLUE_RGB}, 0.22), inset 0 0 10px rgba(255, 255, 255, 0.05)`,
             animation: `wordRipple 1.05s cubic-bezier(0.22, 0.61, 0.36, 1) forwards`,
             animationDelay: `${i * 0.14}s`,
             opacity: 0,
@@ -168,7 +161,10 @@ function WordDissolveParticles({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const onDoneRef = useRef(onDone)
-  onDoneRef.current = onDone
+
+  useEffect(() => {
+    onDoneRef.current = onDone
+  }, [onDone])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -308,7 +304,6 @@ function FallingWord({
       const span = Math.max(1e-4, endTop - startTop)
       let t = (p.top - startTop) / span
       t = Math.min(1, Math.max(0, t))
-      // 略加速收缩感（越接近地面越小）
       const eased = t * t * (3 - 2 * t)
       const scale = 1 + (FALL_SCALE_MIN - 1) * eased
 
@@ -425,16 +420,15 @@ type WordOverlayProps = {
   droppedIndices: ReadonlySet<number>
   boundsRef: RefObject<HTMLElement | null>
   stageHeight: number
-  /** 诗行已全部掉落后：切换提示，引导自由说话开花 */
+  /** After last poem word lands: show hint for free mic phase */
   allWordsDropped: boolean
 }
 
 const POEM_LINE_FONT_SIZE_PX = 18
 
-/** 顶部两句切换：渐隐渐出时长 */
 const LABEL_CROSSFADE_MS = 950
 
-/** 2D 字效果：坐标与落地均在 boundsRef（与 canvas 同尺寸的 stage）内 */
+/** Falls + ripples in the same box as WebGL (boundsRef). */
 export function WordOverlay({
   sentences,
   droppedIndices,
@@ -448,8 +442,9 @@ export function WordOverlay({
     fontWeight: 400,
     fontStyle: 'normal',
     letterSpacing: '0.05em',
-    textShadow:
-      '0 0 10px rgba(240, 245, 255, 0.65), 0 0 26px rgba(230, 238, 255, 0.4), 0 0 44px rgba(220, 232, 255, 0.2)',
+    WebkitTextStroke: `0.4px ${ACCENT_GREEN}`,
+    paintOrder: 'stroke fill',
+    textShadow: `0 2px 12px rgba(${ACCENT_BLUE_RGB}, 0.5), 0 4px 24px rgba(${ACCENT_BLUE_RGB}, 0.28)`,
     userSelect: 'none',
     whiteSpace: 'nowrap',
     position: 'absolute',
