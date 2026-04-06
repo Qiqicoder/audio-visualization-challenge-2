@@ -18,6 +18,8 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
   const vizRef = useRef<VoiceTreeVisualizer | null>(null)
   const initializedRef = useRef(false)
   const [fallenWords, setFallenWords] = useState<Set<number>>(new Set())
+  const [speechListening, setSpeechListening] = useState(false)
+  const [engineReady, setEngineReady] = useState(false)
 
   const dropWord = useCallback((index: number) => {
     setFallenWords(prev => new Set([...prev, index]))
@@ -32,15 +34,21 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
     if (!containerRef.current) return
     if (initializedRef.current) return
     initializedRef.current = true
+    setSpeechListening(false)
+    setEngineReady(false)
 
-    const viz = new VoiceTreeVisualizer(containerRef.current, width, height, dropWord)
+    const viz = new VoiceTreeVisualizer(containerRef.current, width, height, dropWord, {
+      onSpeechListeningStart: () => setSpeechListening(true),
+    })
     vizRef.current = viz
-    viz.init()
+    setEngineReady(true)
 
     return () => {
       viz.dispose()
       vizRef.current = null
       initializedRef.current = false
+      setEngineReady(false)
+      setSpeechListening(false)
     }
   }, [width, height, dropWord])
 
@@ -57,6 +65,17 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
 
   return (
     <div ref={boundsRef} style={{ position: 'relative', width, height, overflow: 'hidden' }}>
+      {!speechListening && (
+        <button
+          type="button"
+          className="viz-start-voice"
+          disabled={!engineReady}
+          onClick={() => vizRef.current?.startSpeech()}
+          title="Chrome needs a click to start speech recognition (allow the mic first)"
+        >
+          Start voice
+        </button>
+      )}
       <button
         type="button"
         className="viz-bloom-skip"

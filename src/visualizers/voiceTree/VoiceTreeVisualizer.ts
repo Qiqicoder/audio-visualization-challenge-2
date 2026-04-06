@@ -15,28 +15,37 @@ export class VoiceTreeVisualizer {
     container: HTMLElement,
     width: number,
     height: number,
-    dropWord: (index: number) => void
+    dropWord: (index: number) => void,
+    opts: { onSpeechListeningStart?: () => void } = {}
   ) {
     this.tree = new TreeSystem(container, width, height)
     this.dropWord = dropWord
 
-    this.speech = new SpeechHandler((word) => {
-      if (this.currentSentence >= POEM.length) return
+    this.speech = new SpeechHandler(
+      (word) => {
+        if (this.currentSentence >= POEM.length) return
 
-      const cleaned = word.toLowerCase().replace(/[^a-z]/g, '')
-      const line = POEM[this.currentSentence]
+        const cleaned = word.toLowerCase().replace(/[^a-z]/g, '')
+        const line = POEM[this.currentSentence]
 
-      if (import.meta.env.DEV) {
-        console.debug(
-          `[poem] line ${this.currentSentence + 1}/${POEM.length} keywords=${line.keywords.join(',')} heard="${cleaned}"`
-        )
-      }
+        if (import.meta.env.DEV) {
+          console.debug(
+            `[poem] line ${this.currentSentence + 1}/${POEM.length} keywords=${line.keywords.join(',')} heard="${cleaned}"`
+          )
+        }
 
-      if (line.keywords.includes(cleaned)) {
-        this.dropSentence(this.currentSentence)
-        this.currentSentence++
-      }
-    })
+        if (line.keywords.includes(cleaned)) {
+          this.dropSentence(this.currentSentence)
+          this.currentSentence++
+        }
+      },
+      { onListeningStart: opts.onSpeechListeningStart }
+    )
+  }
+
+  /** Call from a user gesture (click/tap). Auto start in useEffect triggers `not-allowed` in Chrome. */
+  startSpeech() {
+    this.speech.start()
   }
 
   private dropSentence(sentenceIndex: number) {
@@ -56,10 +65,6 @@ export class VoiceTreeVisualizer {
     if (sentenceIndex === 1) this.tree.triggerGrow(1)
     if (sentenceIndex === 2) this.tree.triggerGrow(2)
     if (sentenceIndex === 3) this.tree.triggerGrow(3)
-  }
-
-  init() {
-    this.speech.start()
   }
 
   update(timeDomain: Uint8Array, frequency: Uint8Array) {
