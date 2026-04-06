@@ -21,9 +21,11 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
   const vizRef = useRef<VoiceTreeVisualizer | null>(null)
   const initializedRef = useRef(false)
   const speechStateRef = useRef<SpeechState>('idle')
+  const heardClearTimerRef = useRef<number | null>(null)
 
   const [speechState, setSpeechState] = useState<SpeechState>('idle')
   const [fallenWords, setFallenWords] = useState<Set<number>>(new Set())
+  const [heardLine, setHeardLine] = useState('')
 
   const setSpeechStateSafe = useCallback((next: SpeechState) => {
     speechStateRef.current = next
@@ -72,14 +74,38 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
         }
         setSpeechStateSafe('error')
       },
+      onSpeechHeardWord: (word) => {
+        const normalized = word.toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '')
+        if (!normalized) return
+
+        if (heardClearTimerRef.current !== null) {
+          window.clearTimeout(heardClearTimerRef.current)
+        }
+
+        setHeardLine(prev => {
+          const next = `${prev} ${normalized}`.trim()
+          const parts = next.split(/\s+/)
+          return parts.slice(-5).join(' ')
+        })
+
+        heardClearTimerRef.current = window.setTimeout(() => {
+          setHeardLine('')
+          heardClearTimerRef.current = null
+        }, 2000)
+      },
     })
     vizRef.current = viz
 
     return () => {
+      if (heardClearTimerRef.current !== null) {
+        window.clearTimeout(heardClearTimerRef.current)
+        heardClearTimerRef.current = null
+      }
       viz.dispose()
       vizRef.current = null
       initializedRef.current = false
       setSpeechStateSafe('idle')
+      setHeardLine('')
     }
   }, [width, height, dropWord, isActive, setSpeechStateSafe])
 
@@ -87,6 +113,7 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
     if (!isActive) {
       queueMicrotask(() => {
         setSpeechStateSafe('idle')
+        setHeardLine('')
       })
     }
   }, [isActive, setSpeechStateSafe])
@@ -113,35 +140,45 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
             ? 'Retry Speech'
             : 'Start Speech'
 
+  const speechGateOpen = speechState === 'ready'
+  const showHeardCaption = speechGateOpen && heardLine && fallenWords.size < POEM_WORD_COUNT
+
   return (
     <div ref={boundsRef} style={{ position: 'relative', width, height, overflow: 'hidden' }}>
-      {speechState !== 'ready' && (
+      {!speechGateOpen && (
+        <div className="viz-speech-gate" role="presentation" aria-hidden={speechState !== 'blocked'}>
+          <button
+            type="button"
+            className="viz-speech-start"
+            onClick={beginSpeech}
+            disabled={speechState === 'starting' || speechState === 'unsupported'}
+            title="Click to start speech recognition for poem keywords"
+          >
+            {speechButtonText}
+          </button>
+        </div>
+      )}
+      {speechGateOpen && (
         <button
           type="button"
-          className="viz-speech-start"
-          onClick={beginSpeech}
-          disabled={speechState === 'starting' || speechState === 'unsupported'}
-          title="Click to start speech recognition for poem keywords"
+          className="viz-bloom-skip"
+          onClick={skipToBloom}
+          title="Optional: skip the poem and jump to the tree bloom (microphone visualization)"
         >
-          {speechButtonText}
+          Bloom
         </button>
       )}
-      <button
-        type="button"
-        className="viz-bloom-skip"
-        onClick={skipToBloom}
-        title="Optional: skip the poem and jump to the tree bloom (microphone visualization)"
-      >
-        Bloom
-      </button>
       <div ref={containerRef} style={{ width, height, display: 'block' }} />
-      <WordOverlay
-        boundsRef={boundsRef}
-        stageHeight={height}
-        sentences={OVERLAY_SENTENCES}
-        droppedIndices={fallenWords}
-        allWordsDropped={fallenWords.size >= POEM_WORD_COUNT}
-      />
+      {speechGateOpen && (
+        <WordOverlay
+          boundsRef={boundsRef}
+          stageHeight={height}
+          sentences={OVERLAY_SENTENCES}
+          droppedIndices={fallenWords}
+          allWordsDropped={fallenWords.size >= POEM_WORD_COUNT}
+        />
+      )}
+      {showHeardCaption && <div className="viz-heard-caption">{heardLine}</div>}
     </div>
   )
 }

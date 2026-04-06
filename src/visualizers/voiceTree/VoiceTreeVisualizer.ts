@@ -7,6 +7,7 @@ type VoiceTreeVisualizerOptions = {
   onSpeechListeningStart?: () => void
   onSpeechListeningEnd?: () => void
   onSpeechError?: (error: SpeechErrorCode) => void
+  onSpeechHeardWord?: (word: string) => void
 }
 
 export class VoiceTreeVisualizer {
@@ -29,6 +30,8 @@ export class VoiceTreeVisualizer {
 
     this.speech = new SpeechHandler(
       (word) => {
+        opts.onSpeechHeardWord?.(word)
+
         if (this.currentSentence >= POEM.length) return
 
         const cleaned = word.toLowerCase().replace(/[^a-z]/g, '')
