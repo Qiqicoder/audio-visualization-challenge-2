@@ -258,24 +258,46 @@ canvas {
   color: #d4d4d4;
 }
 
-/* Speech state helper (shown only while recognition is not ready) */
-.viz-speech-status {
+/* Explicit speech trigger for stable first-run behavior in Chrome */
+.viz-speech-start {
   position: absolute;
-  left: 50%;
-  top: 12px;
-  transform: translateX(-50%);
-  z-index: 90;
-  padding: 3px 10px;
-  border-radius: 999px;
+  left: 8px;
+  bottom: 8px;
+  z-index: 110;
+  margin: 0;
+  padding: 4px 10px;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.08em;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: rgba(220, 248, 240, 0.9);
-  background: rgba(0, 30, 56, 0.42);
-  border: 1px solid rgba(112, 196, 170, 0.4);
-  pointer-events: none;
+  color: rgba(220, 248, 240, 0.92);
+  background: rgba(0, 30, 56, 0.52);
+  border: 1px solid rgba(112, 196, 170, 0.45);
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    border-color 0.2s ease,
+    background 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.viz-speech-start:hover,
+.viz-speech-start:focus-visible {
+  color: rgba(235, 254, 248, 0.98);
+  border-color: rgba(126, 224, 191, 0.75);
+  background: rgba(0, 42, 76, 0.62);
+  outline: none;
+}
+
+.viz-speech-start:focus-visible {
+  box-shadow: 0 0 0 2px rgba(41, 239, 181, 0.2);
+}
+
+.viz-speech-start:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* Optional skip: bottom corner, almost invisible until hover/focus */

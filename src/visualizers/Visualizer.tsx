@@ -12,9 +12,7 @@ export interface VisualizerProps {
   height: number
 }
 
-type SpeechState = 'idle' | 'starting' | 'ready' | 'retrying' | 'blocked' | 'unsupported'
-
-const RETRYABLE_ERRORS = new Set<SpeechErrorCode>(['network', 'audio-capture', 'no-speech', 'aborted', 'start-failed'])
+type SpeechState = 'idle' | 'starting' | 'ready' | 'blocked' | 'unsupported' | 'error'
 
 export function Visualizer({ frequencyData, timeDomainData, isActive, width, height }: VisualizerProps) {
   /** Same box as WebGL; 2D words use this ref (not fixed viewport height). */
@@ -22,11 +20,7 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
   const containerRef = useRef<HTMLDivElement>(null)
   const vizRef = useRef<VoiceTreeVisualizer | null>(null)
   const initializedRef = useRef(false)
-
-  const isActiveRef = useRef(isActive)
   const speechStateRef = useRef<SpeechState>('idle')
-  const retryTimerRef = useRef<number | null>(null)
-  const retryAttemptRef = useRef(0)
 
   const [speechState, setSpeechState] = useState<SpeechState>('idle')
   const [fallenWords, setFallenWords] = useState<Set<number>>(new Set())
@@ -34,13 +28,6 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
   const setSpeechStateSafe = useCallback((next: SpeechState) => {
     speechStateRef.current = next
     setSpeechState(next)
-  }, [])
-
-  const clearRetryTimer = useCallback(() => {
-    if (retryTimerRef.current !== null) {
-      window.clearTimeout(retryTimerRef.current)
-      retryTimerRef.current = null
-    }
   }, [])
 
   const dropWord = useCallback((index: number) => {
@@ -52,91 +39,58 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
     vizRef.current?.skipToBloom()
   }, [])
 
-  const tryStartSpeech = useCallback(() => {
+  const beginSpeech = useCallback(() => {
+    if (!isActive) return
     if (!vizRef.current) return
-    if (speechStateRef.current === 'ready' || speechStateRef.current === 'blocked' || speechStateRef.current === 'unsupported') {
+    if (speechStateRef.current === 'ready' || speechStateRef.current === 'starting' || speechStateRef.current === 'unsupported') {
       return
     }
     setSpeechStateSafe('starting')
     vizRef.current.startSpeech()
-  }, [setSpeechStateSafe])
-
-  const scheduleRetry = useCallback((delayMs: number) => {
-    clearRetryTimer()
-    if (!isActiveRef.current) return
-    setSpeechStateSafe('retrying')
-    retryTimerRef.current = window.setTimeout(() => {
-      retryTimerRef.current = null
-      if (!isActiveRef.current) return
-      tryStartSpeech()
-    }, delayMs)
-  }, [clearRetryTimer, setSpeechStateSafe, tryStartSpeech])
-
-  useEffect(() => {
-    isActiveRef.current = isActive
-  }, [isActive])
+  }, [isActive, setSpeechStateSafe])
 
   useEffect(() => {
     if (!containerRef.current) return
     if (initializedRef.current) return
     initializedRef.current = true
-    retryAttemptRef.current = 0
 
     const viz = new VoiceTreeVisualizer(containerRef.current, width, height, dropWord, {
       onSpeechListeningStart: () => {
-        retryAttemptRef.current = 0
-        clearRetryTimer()
         setSpeechStateSafe('ready')
       },
       onSpeechListeningEnd: () => {
-        if (!isActiveRef.current || speechStateRef.current === 'blocked' || speechStateRef.current === 'unsupported') return
-        scheduleRetry(450)
+        if (!isActive || speechStateRef.current !== 'ready') return
+        // SpeechHandler handles auto-restart internally when allowed.
       },
-      onSpeechError: (error) => {
+      onSpeechError: (error: SpeechErrorCode) => {
         if (error === 'not-supported') {
-          clearRetryTimer()
           setSpeechStateSafe('unsupported')
           return
         }
         if (error === 'not-allowed' || error === 'service-not-allowed') {
-          clearRetryTimer()
           setSpeechStateSafe('blocked')
           return
         }
-        if (RETRYABLE_ERRORS.has(error)) {
-          retryAttemptRef.current += 1
-          const delay = Math.min(8000, 500 * 2 ** (retryAttemptRef.current - 1))
-          scheduleRetry(delay)
-          return
-        }
-        scheduleRetry(1200)
+        setSpeechStateSafe('error')
       },
     })
     vizRef.current = viz
 
     return () => {
-      clearRetryTimer()
       viz.dispose()
       vizRef.current = null
       initializedRef.current = false
-      retryAttemptRef.current = 0
       setSpeechStateSafe('idle')
     }
-  }, [width, height, dropWord, clearRetryTimer, scheduleRetry, setSpeechStateSafe])
+  }, [width, height, dropWord, isActive, setSpeechStateSafe])
 
   useEffect(() => {
     if (!isActive) {
-      clearRetryTimer()
-      retryAttemptRef.current = 0
       queueMicrotask(() => {
         setSpeechStateSafe('idle')
       })
-      return
     }
-    queueMicrotask(() => {
-      tryStartSpeech()
-    })
-  }, [isActive, clearRetryTimer, setSpeechStateSafe, tryStartSpeech])
+  }, [isActive, setSpeechStateSafe])
 
   useEffect(() => {
     if (!isActive) return
@@ -149,25 +103,30 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
     return () => cancelAnimationFrame(frameId)
   }, [isActive, timeDomainData, frequencyData])
 
-  let speechHint = ''
-  if (speechState === 'starting' || speechState === 'retrying') speechHint = 'starting speech...'
-  if (speechState === 'blocked') speechHint = 'tap anywhere to enable speech'
-  if (speechState === 'unsupported') speechHint = 'speech recognition unavailable in this browser'
+  const speechButtonText =
+    speechState === 'starting'
+      ? 'Starting...'
+      : speechState === 'blocked'
+        ? 'Enable Speech'
+        : speechState === 'unsupported'
+          ? 'Speech Unsupported'
+          : speechState === 'error'
+            ? 'Retry Speech'
+            : 'Start Speech'
 
   return (
-    <div
-      ref={boundsRef}
-      style={{ position: 'relative', width, height, overflow: 'hidden' }}
-      onPointerDownCapture={() => {
-        if (!isActive) return
-        if (speechStateRef.current === 'ready' || speechStateRef.current === 'unsupported') return
-        retryAttemptRef.current = 0
-        clearRetryTimer()
-        setSpeechStateSafe('starting')
-        tryStartSpeech()
-      }}
-    >
-      {speechHint && <div className="viz-speech-status">{speechHint}</div>}
+    <div ref={boundsRef} style={{ position: 'relative', width, height, overflow: 'hidden' }}>
+      {speechState !== 'ready' && (
+        <button
+          type="button"
+          className="viz-speech-start"
+          onClick={beginSpeech}
+          disabled={!isActive || speechState === 'starting' || speechState === 'unsupported'}
+          title="Click to start speech recognition for poem keywords"
+        >
+          {speechButtonText}
+        </button>
+      )}
       <button
         type="button"
         className="viz-bloom-skip"
