@@ -16,15 +16,8 @@ interface Branch {
 const TREE_GEN = {
   gScale: 0.9,
   /** L1 朝上收、L2/L3 相对父向额外张开的角（弧度） */
-  angle5: (5.5 * Math.PI) / 180,
+  angle5: (5 * Math.PI) / 180,
 } as const
-
-/** L1 梢：中心高、靠外低（水平距离越大 y 越低） */
-const FAN_DROP_L1 = 0.12
-/** L3 末梢：冠顶扇形，幅度略大于 L1 */
-const FAN_DROP_L3 = 0.24
-
-const TRUNK_OUTLINE_COLOR = 0x4890dc
 
 export class TreeSystem {
   private renderer!: THREE.WebGLRenderer
@@ -48,8 +41,8 @@ export class TreeSystem {
   private forkSphereKeys = new Set<string>()
   private tipCapKeys = new Set<string>()
 
-  private readonly jointRadiusByLevel = [0.097, 0.064, 0.026, 0.0164, 0.0098]
-  private readonly trunkNeckRadius = 0.0666
+  private readonly jointRadiusByLevel = [0.118, 0.078, 0.032, 0.02, 0.012]
+  private readonly trunkNeckRadius = 0.0812
 
   private readonly branchGrowDurationSec = 0.55
   private activeGrowths: { branchIndex: number; mesh: THREE.Mesh; t0: number }[] = []
@@ -181,7 +174,7 @@ export class TreeSystem {
   }
 
   /**
-   * 树拓扑：随机形态 + L1/L3 梢点按水平距修正为扇形顶；各层枝长收紧在窄区间。
+   * 树拓扑与随机过程（勿改数值与 random 顺序，否则树形会变）
    */
   private buildBranchData(): Branch[] {
     const out: Branch[] = []
@@ -205,8 +198,8 @@ export class TreeSystem {
       const sway = (Math.random() - 0.5) * 0.36
       const ang = l1Phase + (i * 2 * Math.PI) / 3 + sway
       const lenScale = 0.52 + Math.random() * 0.42
-      let horiz = 1.08 * lenScale * 0.98
-      let up = 0.38 + Math.random() * 0.28
+      let horiz = 1.08 * lenScale
+      let up = 0.36 + Math.random() * 0.26
 
       let end: THREE.Vector3
       if (i === inwardArm) {
@@ -233,11 +226,6 @@ export class TreeSystem {
         swayOffset: Math.random() * Math.PI * 2,
       })
       l1Ends.push(end)
-    }
-
-    this.applyFanByRadius(l1Ends, FAN_DROP_L1)
-    for (let i = 0; i < 3; i++) {
-      out[i + 1]!.end.copy(l1Ends[i]!)
     }
 
     const l2Tips: { tip: THREE.Vector3; parentStart: THREE.Vector3 }[] = []
@@ -267,7 +255,7 @@ export class TreeSystem {
           dir.add(radial.clone().multiplyScalar(outward ? bump : -bump))
         }
         dir.normalize()
-        const len = (0.52 + (Math.random() - 0.5) * 0.1) * gScale
+        const len = (0.42 + Math.random() * 0.48) * gScale
         const end = origin.clone().add(dir.clone().multiplyScalar(len))
         out.push({
           start: origin.clone(),
@@ -314,14 +302,15 @@ export class TreeSystem {
           .add(t2.clone().multiplyScalar(Math.sin(phase) * spread))
         if (hasR2 && Math.random() < 0.55) {
           const outward = Math.random() < 0.5
-          dir.add(
-            radial2
-              .clone()
-              .multiplyScalar((outward ? 1 : -1) * (0.12 + Math.random() * 0.38))
-          )
+          dir.add(radial2.clone().multiplyScalar((outward ? 1 : -1) * (0.12 + Math.random() * 0.38)))
         }
         dir.normalize()
-        const len = (0.36 + (Math.random() - 0.5) * 0.08) * gScale
+        let len: number
+        if (Math.random() < 0.38) {
+          len = (0.1 + Math.random() * 0.16) * gScale
+        } else {
+          len = (0.28 + Math.random() * 0.42) * gScale
+        }
         const end = tip.clone().add(dir.clone().multiplyScalar(len))
         out.push({
           start: tip.clone(),
@@ -332,9 +321,6 @@ export class TreeSystem {
         })
       }
     })
-
-    const l3Ends = out.filter(b => b.level === 3).map(b => b.end)
-    this.applyFanByRadius(l3Ends, FAN_DROP_L3)
 
     return out
   }
@@ -374,24 +360,6 @@ export class TreeSystem {
     return { t1, t2 }
   }
 
-  /** 水平距离大处 y 降低，形成中心高、边缘低的扇形顶 */
-  private applyFanByRadius(points: THREE.Vector3[], drop: number): void {
-    if (points.length === 0) return
-    let rhoMax = 0
-    for (const p of points) {
-      rhoMax = Math.max(rhoMax, Math.hypot(p.x, p.z))
-    }
-    if (rhoMax < 1e-5) rhoMax = 1
-    let yPeak = -Infinity
-    for (const p of points) {
-      yPeak = Math.max(yPeak, p.y)
-    }
-    for (const p of points) {
-      const u = Math.hypot(p.x, p.z) / rhoMax
-      p.y = yPeak - drop * u * u
-    }
-  }
-
   private branchMaterialForLevel(): THREE.MeshStandardMaterial {
     return new THREE.MeshStandardMaterial({
       color: this.treeBranchColor,
@@ -399,17 +367,6 @@ export class TreeSystem {
       emissiveIntensity: 0.22,
       metalness: 0.18,
       roughness: 0.34,
-    })
-  }
-
-  /** 分叉球：与枝同色但弱发光，更不抢眼 */
-  private forkJointMaterial(): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({
-      color: this.treeBranchColor,
-      emissive: this.treeBranchEmissive,
-      emissiveIntensity: 0.06,
-      metalness: 0.12,
-      roughness: 0.42,
     })
   }
 
@@ -436,19 +393,6 @@ export class TreeSystem {
     mesh.castShadow = true
     mesh.receiveShadow = true
 
-    if (b.level === 0) {
-      const edgeGeo = new THREE.EdgesGeometry(geo, 12)
-      const outline = new THREE.LineSegments(
-        edgeGeo,
-        new THREE.LineBasicMaterial({
-          color: TRUNK_OUTLINE_COLOR,
-          depthTest: true,
-        })
-      )
-      outline.renderOrder = 2
-      mesh.add(outline)
-    }
-
     return mesh
   }
 
@@ -472,9 +416,9 @@ export class TreeSystem {
       Math.abs(position.y - this.trunkTopY) < 0.02 &&
       position.x * position.x + position.z * position.z < 1e-5
     if (atTrunkTop && level === 1) {
-      return (this.jointRadiusAtLevel(0) + this.trunkNeckRadius) * 0.5 * 1.02
+      return (this.jointRadiusAtLevel(0) + this.trunkNeckRadius) * 0.5 * 1.1
     }
-    return this.jointRadiusAtLevel(level) * 1.02
+    return this.jointRadiusAtLevel(level) * 1.14
   }
 
   private ensureForkSphere(position: THREE.Vector3, level: number) {
@@ -484,7 +428,10 @@ export class TreeSystem {
     this.forkSphereKeys.add(key)
 
     const r = this.forkSphereRadiusAt(position, level)
-    const sphere = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 18), this.forkJointMaterial())
+    const sphere = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 20, 18),
+      this.branchMaterialForLevel()
+    )
     sphere.position.copy(position)
     sphere.castShadow = true
     sphere.receiveShadow = true
@@ -678,12 +625,6 @@ export class TreeSystem {
       cancelAnimationFrame(this.animFrameId)
       this.animFrameId = null
     }
-    this.treeGroup.traverse(obj => {
-      if (obj instanceof THREE.LineSegments) {
-        obj.geometry.dispose()
-        ;(obj.material as THREE.Material).dispose()
-      }
-    })
     this.seed.geometry.dispose()
     ;(this.seed.material as THREE.MeshStandardMaterial).dispose()
     this.groundMesh.geometry.dispose()
