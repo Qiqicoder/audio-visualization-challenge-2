@@ -40,14 +40,13 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
   }, [])
 
   const beginSpeech = useCallback(() => {
-    if (!isActive) return
     if (!vizRef.current) return
     if (speechStateRef.current === 'ready' || speechStateRef.current === 'starting' || speechStateRef.current === 'unsupported') {
       return
     }
     setSpeechStateSafe('starting')
     vizRef.current.startSpeech()
-  }, [isActive, setSpeechStateSafe])
+  }, [setSpeechStateSafe])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -121,7 +120,7 @@ export function Visualizer({ frequencyData, timeDomainData, isActive, width, hei
           type="button"
           className="viz-speech-start"
           onClick={beginSpeech}
-          disabled={!isActive || speechState === 'starting' || speechState === 'unsupported'}
+          disabled={speechState === 'starting' || speechState === 'unsupported'}
           title="Click to start speech recognition for poem keywords"
         >
           {speechButtonText}
